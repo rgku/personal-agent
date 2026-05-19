@@ -12,7 +12,6 @@ class Settings(BaseSettings):
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
-    google_redirect_uri: str = "http://localhost:8080/oauth/callback"
 
     max_memories_per_query: int = 5
     profile_update_threshold: int = 3

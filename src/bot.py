@@ -392,15 +392,11 @@ async def export_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cal_auth_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     try:
-        auth_url = CalendarAgent.start_auth(uid)
+        auth_msg = CalendarAgent.start_auth(uid)
     except RuntimeError as e:
         await update.message.reply_text(str(e))
         return
-    await update.message.reply_text(
-        "🔗 Abre este link no teu navegador (no mesmo computador do bot):\n\n"
-        f"{auth_url}\n\n"
-        "Depois de autorizar, receberas confirmacao automatica\\.",
-    )
+    await update.message.reply_text(auth_msg)
 
 
 async def cal_events_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

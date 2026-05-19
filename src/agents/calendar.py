@@ -1,15 +1,14 @@
 import json
 import threading
 import time
-import urllib.parse
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta, timezone as tz
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 import dateparser
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -26,85 +25,62 @@ SCOPES = [
 
 TOKEN_DIR = Path(settings.data_dir) / "cal_tokens"
 
-_cal_flows: dict[str, Flow] = {}
-_cal_flow_users: dict[str, str] = {}
-_cal_flow_ts: dict[str, float] = {}
-
-OAUTH_FLOW_TTL = 600
+_device_flows: dict[str, dict] = {}
 
 
-def _client_config() -> dict:
-    return {
-        "web": {
+def _request_device_code() -> dict:
+    data = json.dumps(
+        {
+            "client_id": settings.google_client_id,
+            "scope": " ".join(SCOPES),
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/device/code",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int = 300):
+    data = json.dumps(
+        {
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [settings.google_redirect_uri],
+            "device_code": device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
         }
-    }
-
-
-def _init_token_dir():
-    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _cleanup_expired_flows():
-    now = time.time()
-    expired = [s for s, ts in _cal_flow_ts.items() if now - ts > OAUTH_FLOW_TTL]
-    for s in expired:
-        _cal_flows.pop(s, None)
-        _cal_flow_users.pop(s, None)
-        _cal_flow_ts.pop(s, None)
-
-
-class _OAuthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-        code = params.get("code", [None])[0]
-        state = params.get("state", [None])[0]
-
-        if code and state and state in _cal_flows:
-            flow = _cal_flows.pop(state)
-            user_id = _cal_flow_users.pop(state, None)
-            _cal_flow_ts.pop(state, None)
-            try:
-                flow.fetch_token(code=code)
-                CalendarAgent._persist_creds(user_id, flow.credentials)
-                self._respond(
-                    200,
-                    "Autorizacao concluida! Podes fechar esta pagina e voltar ao Telegram.",
-                )
-            except Exception as e:
-                self._respond(400, f"Erro ao trocar codigo: {e}")
-        else:
-            self._respond(400, "Pedido invalido ou expirado.")
-
-    def _respond(self, status_code: int, msg: str):
-        self.send_response(status_code)
-        self.send_header("Content-type", "text/html; charset=utf-8")
-        self.end_headers()
-        body = (
-            "<html><body style='font-family:sans-serif;text-align:center;margin-top:50px;'>"
-            f"<h2>{msg}</h2>"
-            "<p>Volta ao Telegram.</p>"
-            "</body></html>"
-        )
-        self.wfile.write(body.encode("utf-8"))
-
-    def log_message(self, format, *args):
-        pass
-
-
-def _run_oauth_server():
-    server = HTTPServer(("127.0.0.1", 8080), _OAuthHandler)
-    server.serve_forever()
-
-
-def start_oauth_server():
-    t = threading.Thread(target=_run_oauth_server, daemon=True)
-    t.start()
+    ).encode("utf-8")
+    start = time.time()
+    while time.time() - start < timeout:
+        time.sleep(interval)
+        try:
+            req = urllib.request.Request(
+                "https://oauth2.googleapis.com/token",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                token_data = json.loads(resp.read())
+                creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+                tp = TOKEN_DIR / f"{user_id}.json"
+                tp.parent.mkdir(parents=True, exist_ok=True)
+                with open(tp, "w") as f:
+                    json.dump(json.loads(creds.to_json()), f)
+                _device_flows.pop(device_code, None)
+                return
+        except urllib.error.HTTPError as e:
+            if e.code == 400:
+                body = json.loads(e.read())
+                err = body.get("error", "")
+                if err == "slow_down":
+                    interval += 5
+                elif err in ("access_denied", "expired_token"):
+                    _device_flows.pop(device_code, None)
+                    return
+    _device_flows.pop(device_code, None)
 
 
 class CalendarAgent(BaseAgent):
@@ -116,7 +92,7 @@ class CalendarAgent(BaseAgent):
 
     def __init__(self, user_id: str):
         self.user_id = user_id
-        _init_token_dir()
+        TOKEN_DIR.mkdir(parents=True, exist_ok=True)
         self._token_path = TOKEN_DIR / f"{user_id}.json"
 
     def _is_authed(self) -> bool:
@@ -160,18 +136,34 @@ class CalendarAgent(BaseAgent):
             raise RuntimeError(
                 "GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET nao configurados no .env"
             )
-        _cleanup_expired_flows()
-        flow = Flow.from_client_config(_client_config(), scopes=SCOPES)
-        flow.redirect_uri = settings.google_redirect_uri
-        auth_url, state = flow.authorization_url(
-            access_type="offline",
-            prompt="consent",
-            include_granted_scopes="true",
+        try:
+            device_info = _request_device_code()
+        except Exception as e:
+            raise RuntimeError(f"Erro ao contactar Google: {e}")
+
+        device_code = device_info["device_code"]
+        user_code = device_info["user_code"]
+        verification_url = device_info.get(
+            "verification_url", "https://www.google.com/device"
         )
-        _cal_flows[state] = flow
-        _cal_flow_users[state] = user_id
-        _cal_flow_ts[state] = time.time()
-        return auth_url
+        interval = device_info.get("interval", 5)
+
+        _device_flows[device_code] = {"user_id": user_id}
+
+        t = threading.Thread(
+            target=_poll_for_token,
+            args=(device_code, user_id, interval),
+            daemon=True,
+        )
+        t.start()
+
+        return (
+            "Passo 1: Abre este link no teu browser:\n"
+            f"{verification_url}\n\n"
+            f"Passo 2: Insere este codigo:\n"
+            f"{user_code}\n\n"
+            "Depois de autorizares, o calendario fica ligado automaticamente."
+        )
 
     @staticmethod
     def _persist_creds(user_id: str, creds: Credentials):

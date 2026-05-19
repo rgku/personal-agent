@@ -6,7 +6,6 @@ import psutil
 
 from src.bot import build_app, setup_jobs
 from src.db.database import init_db
-from src.agents.calendar import start_oauth_server
 
 PID_FILE = os.path.join(os.path.dirname(__file__), "data", "bot.pid")
 
@@ -60,7 +59,6 @@ def main():
     _setup_logging()
     acquire_lock()
     init_db()
-    start_oauth_server()
     app = build_app()
     setup_jobs(app)
     logging.getLogger(__name__).info("Personal Agent started. Ctrl+C to stop.")
