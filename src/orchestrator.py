@@ -74,14 +74,24 @@ class Orchestrator:
         self.conversation.append({"role": "user", "content": user_message})
         self._trim()
 
-        msg = llm_chat(self.conversation, tools=self._tools())
+        try:
+            msg = llm_chat(self.conversation, tools=self._tools())
+        except Exception as e:
+            print(f"[Orchestrator] LLM API error: {e}")
+            return "Desculpa, o servico LLM esta indisponivel. Tenta novamente em alguns segundos."
 
         if msg.tool_calls:
             self.conversation.append(_assistant_tool_msg(msg))
 
             for tc in msg.tool_calls:
                 name = tc.function.name
-                args = json.loads(tc.function.arguments)
+                try:
+                    args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError) as e:
+                    args = {
+                        "error": f"Invalid tool arguments: {e}",
+                        "raw": tc.function.arguments,
+                    }
                 agent = self.agents.get(name)
                 result = (
                     await agent.execute(args.get("action", ""), args)
@@ -96,20 +106,30 @@ class Orchestrator:
                     }
                 )
 
-            msg = llm_chat(self.conversation)
+            try:
+                msg = llm_chat(self.conversation)
+            except Exception as e:
+                print(f"[Orchestrator] LLM API error after tools: {e}")
+                return "Desculpa, o servico LLM esta indisponivel. Tenta novamente em alguns segundos."
 
         reply = msg.content or "Desculpa, nao consegui processar."
         self.conversation.append({"role": "assistant", "content": reply})
         self._trim()
 
-        self._episodic.store(
-            f"User: {user_message}\nAssistant: {reply}",
-            memory_type="interaction",
-        )
+        try:
+            self._episodic.store(
+                f"User: {user_message}\nAssistant: {reply}",
+                memory_type="interaction",
+            )
+        except Exception as e:
+            print(f"[Orchestrator] Episodic memory store failed: {e}")
 
         self._interaction_count += 1
         if self._interaction_count >= settings.profile_update_threshold:
-            await self._learner.learn(user_message, reply)
+            try:
+                await self._learner.learn(user_message, reply)
+            except Exception as e:
+                print(f"[Orchestrator] Learner failed: {e}")
             self._interaction_count = 0
 
         return reply

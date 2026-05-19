@@ -11,10 +11,10 @@ Set-Location $ProjectDir
 
 # === LAUNCHER PID LOCK ===
 # Kill ALL bot processes first (cleanup stale doubles)
-$BotProcs = Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'run\.py' }
+$BotProcs = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'run\.py' }
 if ($BotProcs) {
     Write-Host "  Cleaning old bot instances..." -ForegroundColor DarkYellow
-    $BotProcs | Stop-Process -Force
+    $BotProcs | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     Start-Sleep -Seconds 2
 }
 

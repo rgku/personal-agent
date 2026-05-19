@@ -1,22 +1,28 @@
 import uuid
+from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from ..config import settings
 
+CHROMA_DIR = str(Path(settings.data_dir) / "chromadb")
+
 
 class EpisodicMemory:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._coll = None
+        self._failed = False
 
     def _ensure(self):
         if self._coll is not None:
             return True
+        if self._failed:
+            return False
         try:
             self._client = chromadb.PersistentClient(
-                path=str(settings.data_dir),
+                path=CHROMA_DIR,
                 settings=ChromaSettings(anonymized_telemetry=False),
             )
             self._coll = self._client.get_or_create_collection(
@@ -26,6 +32,7 @@ class EpisodicMemory:
             return True
         except Exception:
             self._coll = None
+            self._failed = True
             return False
 
     def store(self, text: str, memory_type: str = "interaction", tags: str = ""):
@@ -35,11 +42,13 @@ class EpisodicMemory:
             self._coll.add(
                 ids=[str(uuid.uuid4())],
                 documents=[text],
-                metadatas=[{
-                    "user_id": self.user_id,
-                    "type": memory_type,
-                    "tags": tags,
-                }],
+                metadatas=[
+                    {
+                        "user_id": self.user_id,
+                        "type": memory_type,
+                        "tags": tags,
+                    }
+                ],
             )
         except Exception:
             pass

@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone as tz
 
 import dateparser
+from dateutil.relativedelta import relativedelta
 
 from .base import BaseAgent
 from ..db.database import get_connection
@@ -11,7 +12,7 @@ UTC = tz.utc
 RECURRENCE_DELTA = {
     "daily": timedelta(days=1),
     "weekly": timedelta(weeks=1),
-    "monthly": timedelta(days=30),
+    "monthly": relativedelta(months=1),
 }
 
 
@@ -67,11 +68,21 @@ class ReminderAgent(BaseAgent):
             return {"error": "message and trigger_at are required"}
 
         if recurrence and recurrence not in RECURRENCE_DELTA:
-            return {"error": f"Invalid recurrence: {recurrence}. Use daily, weekly, monthly."}
+            return {
+                "error": f"Invalid recurrence: {recurrence}. Use daily, weekly, monthly."
+            }
 
         trigger_at = parse_date(raw_trigger, self._tz())
         if trigger_at is None:
-            trigger_at = raw_trigger
+            parsed = dateparser.parse(raw_trigger)
+            if parsed:
+                if parsed.tzinfo:
+                    parsed = parsed.astimezone(UTC)
+                else:
+                    parsed = parsed.replace(tzinfo=UTC)
+                trigger_at = parsed.strftime("%Y-%m-%dT%H:%M")
+            else:
+                trigger_at = raw_trigger
 
         rid = str(uuid.uuid4())[:8]
         conn = get_connection()
@@ -133,7 +144,8 @@ class ReminderAgent(BaseAgent):
         now = _now_utc()
         rows = conn.execute(
             "SELECT id, user_id, message, recurrence "
-            "FROM reminders WHERE trigger_at <= ? AND notified = 0",
+            "FROM reminders WHERE trigger_at <= ? AND notified = 0 "
+            "ORDER BY trigger_at LIMIT 50",
             (now,),
         ).fetchall()
         conn.close()
@@ -165,6 +177,9 @@ class ReminderAgent(BaseAgent):
                 conn.commit()
                 conn.close()
                 return
+            print(
+                f"[Reminders] Could not parse trigger_at for recurrence: {row['trigger_at']}"
+            )
 
         conn.execute("UPDATE reminders SET notified = 1 WHERE id = ?", (rid,))
         conn.commit()

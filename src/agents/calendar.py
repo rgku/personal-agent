@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone as tz
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -14,6 +15,7 @@ from googleapiclient.errors import HttpError
 
 from .base import BaseAgent
 from ..config import settings
+from ..memory.profile import ProfileManager
 
 UTC = tz.utc
 
@@ -26,6 +28,9 @@ TOKEN_DIR = Path(settings.data_dir) / "cal_tokens"
 
 _cal_flows: dict[str, Flow] = {}
 _cal_flow_users: dict[str, str] = {}
+_cal_flow_ts: dict[str, float] = {}
+
+OAUTH_FLOW_TTL = 600
 
 
 def _client_config() -> dict:
@@ -44,6 +49,15 @@ def _init_token_dir():
     TOKEN_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _cleanup_expired_flows():
+    now = time.time()
+    expired = [s for s, ts in _cal_flow_ts.items() if now - ts > OAUTH_FLOW_TTL]
+    for s in expired:
+        _cal_flows.pop(s, None)
+        _cal_flow_users.pop(s, None)
+        _cal_flow_ts.pop(s, None)
+
+
 class _OAuthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -54,10 +68,14 @@ class _OAuthHandler(BaseHTTPRequestHandler):
         if code and state and state in _cal_flows:
             flow = _cal_flows.pop(state)
             user_id = _cal_flow_users.pop(state, None)
+            _cal_flow_ts.pop(state, None)
             try:
                 flow.fetch_token(code=code)
                 CalendarAgent._persist_creds(user_id, flow.credentials)
-                self._respond(200, "Autorizacao concluida! Podes fechar esta pagina e voltar ao Telegram.")
+                self._respond(
+                    200,
+                    "Autorizacao concluida! Podes fechar esta pagina e voltar ao Telegram.",
+                )
             except Exception as e:
                 self._respond(400, f"Erro ao trocar codigo: {e}")
         else:
@@ -80,7 +98,7 @@ class _OAuthHandler(BaseHTTPRequestHandler):
 
 
 def _run_oauth_server():
-    server = HTTPServer(("0.0.0.0", 8080), _OAuthHandler)
+    server = HTTPServer(("127.0.0.1", 8080), _OAuthHandler)
     server.serve_forever()
 
 
@@ -116,8 +134,11 @@ class CalendarAgent(BaseAgent):
             creds = Credentials.from_authorized_user_info(json.load(f), SCOPES)
         if not creds.valid:
             if creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                self._save_creds(creds)
+                try:
+                    creds.refresh(Request())
+                    self._save_creds(creds)
+                except Exception:
+                    return None
             else:
                 return None
         return creds
@@ -136,7 +157,10 @@ class CalendarAgent(BaseAgent):
     @staticmethod
     def start_auth(user_id: str) -> str:
         if not settings.google_client_id or not settings.google_client_secret:
-            raise RuntimeError("GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET nao configurados no .env")
+            raise RuntimeError(
+                "GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET nao configurados no .env"
+            )
+        _cleanup_expired_flows()
         flow = Flow.from_client_config(_client_config(), scopes=SCOPES)
         flow.redirect_uri = settings.google_redirect_uri
         auth_url, state = flow.authorization_url(
@@ -146,6 +170,7 @@ class CalendarAgent(BaseAgent):
         )
         _cal_flows[state] = flow
         _cal_flow_users[state] = user_id
+        _cal_flow_ts[state] = time.time()
         return auth_url
 
     @staticmethod
@@ -166,30 +191,40 @@ class CalendarAgent(BaseAgent):
             tp.unlink()
 
     @classmethod
-    def get_events_for_range(cls, user_id: str, start: datetime, end: datetime) -> list[dict]:
+    def get_events_for_range(
+        cls, user_id: str, start: datetime, end: datetime
+    ) -> list[dict]:
         agent = cls(user_id)
         svc = agent._get_service()
         if not svc:
             return []
         try:
-            result = svc.events().list(
-                calendarId="primary",
-                timeMin=start.isoformat(),
-                timeMax=end.isoformat(),
-                singleEvents=True,
-                orderBy="startTime",
-            ).execute()
+            result = (
+                svc.events()
+                .list(
+                    calendarId="primary",
+                    timeMin=start.isoformat(),
+                    timeMax=end.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
             events = []
             for event in result.get("items", []):
-                start_info = event["start"].get("dateTime", event["start"].get("date", ""))
+                start_info = event["start"].get(
+                    "dateTime", event["start"].get("date", "")
+                )
                 end_info = event["end"].get("dateTime", event["end"].get("date", ""))
-                events.append({
-                    "id": event.get("id"),
-                    "summary": event.get("summary", ""),
-                    "start": start_info,
-                    "end": end_info,
-                    "description": event.get("description", ""),
-                })
+                events.append(
+                    {
+                        "id": event.get("id"),
+                        "summary": event.get("summary", ""),
+                        "start": start_info,
+                        "end": end_info,
+                        "description": event.get("description", ""),
+                    }
+                )
             return events
         except Exception:
             return []
@@ -203,7 +238,9 @@ class CalendarAgent(BaseAgent):
     def _handle_list_today(self, p: dict) -> dict:
         svc = self._get_service()
         if not svc:
-            return {"error": "Google Calendar nao conectado. Usa /cal_auth para conectar."}
+            return {
+                "error": "Google Calendar nao conectado. Usa /cal_auth para conectar."
+            }
         now = datetime.now(UTC)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -212,7 +249,9 @@ class CalendarAgent(BaseAgent):
     def _handle_list_week(self, p: dict) -> dict:
         svc = self._get_service()
         if not svc:
-            return {"error": "Google Calendar nao conectado. Usa /cal_auth para conectar."}
+            return {
+                "error": "Google Calendar nao conectado. Usa /cal_auth para conectar."
+            }
         now = datetime.now(UTC)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=7)
@@ -224,7 +263,9 @@ class CalendarAgent(BaseAgent):
     def _handle_create(self, p: dict) -> dict:
         svc = self._get_service()
         if not svc:
-            return {"error": "Google Calendar nao conectado. Usa /cal_auth para conectar."}
+            return {
+                "error": "Google Calendar nao conectado. Usa /cal_auth para conectar."
+            }
         summary = p.get("summary", "")
         start_str = p.get("start", "")
         end_str = p.get("end", "")
@@ -232,7 +273,10 @@ class CalendarAgent(BaseAgent):
         if not summary or not start_str:
             return {"error": "summary e start sao obrigatorios"}
 
-        settings_dp = {"PREFER_DATES_FROM": "future"}
+        profile = ProfileManager(self.user_id).get()
+        user_tz = profile.timezone or "UTC"
+
+        settings_dp = {"PREFER_DATES_FROM": "future", "TIMEZONE": user_tz}
         start_dt = dateparser.parse(start_str, settings=settings_dp)
         end_dt = dateparser.parse(end_str, settings=settings_dp) if end_str else None
 
@@ -243,11 +287,13 @@ class CalendarAgent(BaseAgent):
             "summary": summary,
             "start": {
                 "dateTime": start_dt.isoformat(),
-                "timeZone": "UTC",
+                "timeZone": user_tz,
             },
             "end": {
-                "dateTime": end_dt.isoformat() if end_dt else (start_dt + timedelta(hours=1)).isoformat(),
-                "timeZone": "UTC",
+                "dateTime": end_dt.isoformat()
+                if end_dt
+                else (start_dt + timedelta(hours=1)).isoformat(),
+                "timeZone": user_tz,
             },
         }
         if description:
@@ -263,24 +309,32 @@ class CalendarAgent(BaseAgent):
 
     def _fetch_events(self, svc, start: datetime, end: datetime) -> dict:
         try:
-            result = svc.events().list(
-                calendarId="primary",
-                timeMin=start.isoformat(),
-                timeMax=end.isoformat(),
-                singleEvents=True,
-                orderBy="startTime",
-            ).execute()
+            result = (
+                svc.events()
+                .list(
+                    calendarId="primary",
+                    timeMin=start.isoformat(),
+                    timeMax=end.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
             events = []
             for event in result.get("items", []):
-                start_info = event["start"].get("dateTime", event["start"].get("date", ""))
+                start_info = event["start"].get(
+                    "dateTime", event["start"].get("date", "")
+                )
                 end_info = event["end"].get("dateTime", event["end"].get("date", ""))
-                events.append({
-                    "id": event.get("id"),
-                    "summary": event.get("summary", ""),
-                    "start": start_info,
-                    "end": end_info,
-                    "description": event.get("description", ""),
-                })
+                events.append(
+                    {
+                        "id": event.get("id"),
+                        "summary": event.get("summary", ""),
+                        "start": start_info,
+                        "end": end_info,
+                        "description": event.get("description", ""),
+                    }
+                )
             return {"status": "ok", "count": len(events), "events": events}
         except HttpError as e:
             return {"error": str(e)}

@@ -1,6 +1,35 @@
+import socket
+import time
+import ipaddress
+from urllib.parse import urlparse
 from duckduckgo_search import DDGS
 
 from .base import BaseAgent
+
+
+def _is_safe_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        resolved = socket.getaddrinfo(hostname, None)
+        ip = ipaddress.ip_address(resolved[0][4][0])
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+    ):
+        return False
+    if ip in ipaddress.ip_network("169.254.0.0/16"):
+        return False
+    return True
 
 
 class SearchAgent(BaseAgent):
@@ -25,27 +54,35 @@ class SearchAgent(BaseAgent):
         if not query:
             return {"error": "query is required"}
 
-        try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=5))
-            return {
-                "status": "ok",
-                "count": len(results),
-                "results": [
-                    {"title": r["title"], "url": r["href"], "snippet": r["body"]}
-                    for r in results
-                ],
-            }
-        except Exception as e:
-            return {"error": f"Search failed: {e}"}
+        for attempt in range(3):
+            try:
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(query, max_results=5))
+                return {
+                    "status": "ok",
+                    "count": len(results),
+                    "results": [
+                        {"title": r["title"], "url": r["href"], "snippet": r["body"]}
+                        for r in results
+                    ],
+                }
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2**attempt)
+                else:
+                    return {"error": f"Search failed: {e}"}
 
     def _handle_web_fetch(self, p: dict) -> dict:
         url = p.get("url", "")
         if not url:
             return {"error": "url is required"}
 
+        if not _is_safe_url(url):
+            return {"error": "URL nao permitida (apenas URLs publicas HTTPS)"}
+
         try:
             import urllib.request
+
             req = urllib.request.Request(
                 url,
                 headers={"User-Agent": "Mozilla/5.0"},

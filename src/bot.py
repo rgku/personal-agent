@@ -1,6 +1,10 @@
+import datetime as dt
+import logging
 import os
 import subprocess
 import sys
+import traceback
+from pathlib import Path
 from zoneinfo import available_timezones
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -17,6 +21,15 @@ from .config import settings
 from .orchestrator import Orchestrator
 from .memory.profile import ProfileManager
 from .agents.calendar import CalendarAgent
+from .agents.notes import NotesAgent
+from .agents.reminders import ReminderAgent
+from .agents.shopping import ShoppingAgent, get_all_user_ids
+from .agents.todos import TodoAgent
+from .agents.habits import HabitsAgent
+
+logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PID_FILE = PROJECT_ROOT / "data" / "bot.pid"
 
 _orchestrators: dict[int, Orchestrator] = {}
 
@@ -206,16 +219,17 @@ async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_bot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("A atualizar... ⏳")
+    await update.message.reply_text("A atualizar... \u23f3")
     try:
         result = subprocess.run(
-            ["git", "pull"],
-            capture_output=True,
-            text=True,
+            ["git", "pull"], capture_output=True, text=True, cwd=str(PROJECT_ROOT)
         )
-        out = result.stdout.strip() or result.stderr.strip() or "sem alteracoes"
-        await update.message.reply_text(f"git pull: {out[:500]}")
-        subprocess.run(
+        out = (result.stdout.strip() or result.stderr.strip() or "sem alteracoes")[:500]
+        import re as _re
+
+        out = _re.sub(r"https://[^@\s]+@", "https://[redacted]@", out)
+        await update.message.reply_text(f"git pull: {out}")
+        pip_result = subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -226,26 +240,29 @@ async def update_bot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "--quiet",
             ],
             capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
         )
-        await update.message.reply_text("A reiniciar... 🔄")
+        if pip_result.returncode != 0:
+            await update.message.reply_text(
+                f"pip install falhou: {pip_result.stderr[:300]}"
+            )
+            return
+        await update.message.reply_text("A reiniciar... \U0001f504")
+        _clean_pid()
         os._exit(42)
-    except Exception as e:
-        await update.message.reply_text(f"Erro ao atualizar: {e}")
+    except Exception:
+        traceback.print_exc()
+        await update.message.reply_text("Erro ao atualizar. Ve os logs.")
 
 
 async def restart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("A reiniciar... 🔄")
+    await update.message.reply_text("A reiniciar... \U0001f504")
+    _clean_pid()
     os._exit(42)
 
 
 async def hoje_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    import datetime as dt
-    from .agents.reminders import ReminderAgent
-    from .agents.shopping import ShoppingAgent
-    from .agents.todos import TodoAgent
-    from .agents.habits import HabitsAgent
-    from .agents.calendar import CalendarAgent
-
     uid = str(update.effective_user.id)
     now = dt.datetime.now(dt.timezone.utc)
     today_str = now.strftime("%Y-%m-%d")
@@ -310,13 +327,6 @@ async def hoje_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def export_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    import datetime as dt
-    from .agents.notes import NotesAgent
-    from .agents.reminders import ReminderAgent
-    from .agents.shopping import ShoppingAgent
-    from .agents.todos import TodoAgent
-    from .agents.habits import HabitsAgent
-
     uid = str(update.effective_user.id)
     mgr = ProfileManager(uid)
     p = mgr.get()
@@ -402,8 +412,6 @@ async def cal_events_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    import datetime as dt
-
     now = dt.datetime.now(dt.timezone.utc)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + dt.timedelta(days=7)
@@ -434,11 +442,15 @@ async def cal_desconectar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text
+    if not text or len(text) > 4000:
+        await update.message.reply_text("Mensagem muito longa. Tenta algo mais curto.")
+        return
     try:
         reply = await _orch(uid).process(text)
         await update.message.reply_text(reply)
-    except Exception as e:
-        await update.message.reply_text(f"Erro: {e}")
+    except Exception:
+        traceback.print_exc()
+        await update.message.reply_text("Ocorreu um erro. Tenta novamente.")
 
 
 async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -449,15 +461,15 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE):
-    import traceback
     import telegram.error
 
     err = ctx.error
     if isinstance(err, telegram.error.Conflict):
         print("FATAL: Another bot instance is polling. Shutting down.")
+        _clean_pid()
         os._exit(0)
     print(f"Error: {err}")
-    traceback.print_exception(type(err), err, err.__traceback__)
+    traceback.print_exception(err)
 
 
 def build_app() -> Application:
@@ -497,12 +509,6 @@ def build_app() -> Application:
 
 
 def setup_jobs(app: Application):
-    import datetime as dt
-    from .agents.reminders import ReminderAgent
-    from .agents.shopping import ShoppingAgent, get_all_user_ids
-    from .agents.todos import TodoAgent
-    from .agents.habits import HabitsAgent
-
     async def check_reminders(ctx: ContextTypes.DEFAULT_TYPE):
         due = ReminderAgent.get_due()
         for r in due:
@@ -513,7 +519,7 @@ def setup_jobs(app: Application):
                     parse_mode="MarkdownV2",
                 )
             except Exception:
-                pass
+                traceback.print_exc()
             ReminderAgent.mark_notified(r["id"])
 
     async def daily_briefing(ctx: ContextTypes.DEFAULT_TYPE):
@@ -642,7 +648,7 @@ def setup_jobs(app: Application):
                     parse_mode="MarkdownV2",
                 )
             except Exception:
-                pass
+                traceback.print_exc()
 
     async def proactive_habits(ctx: ContextTypes.DEFAULT_TYPE):
         for uid, pending_habits in HabitsAgent.get_users_with_pending():
@@ -656,7 +662,7 @@ def setup_jobs(app: Application):
                     parse_mode="MarkdownV2",
                 )
             except Exception:
-                pass
+                traceback.print_exc()
 
     app.job_queue.run_repeating(check_reminders, interval=30, first=10)
     app.job_queue.run_daily(
@@ -669,7 +675,16 @@ def setup_jobs(app: Application):
     )
 
 
+def _clean_pid():
+    try:
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+    except Exception:
+        pass
+
+
 def _escape(text: str) -> str:
+    """Escape MarkdownV2 special characters. Input must be raw, not pre-escaped."""
     text = text.replace("\\", "\\\\")
     for ch in "_*[]()~`>#+-=|{}.!":
         text = text.replace(ch, f"\\{ch}")

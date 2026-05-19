@@ -57,9 +57,24 @@ class TodoAgent(BaseAgent):
         title = p.get("title", "")
         conn = get_connection()
         if tid:
-            conn.execute("UPDATE todos SET status='done', updated_at=datetime('now') WHERE id=? AND user_id=?", (tid, self.user_id))
+            conn.execute(
+                "UPDATE todos SET status='done', updated_at=datetime('now') WHERE id=? AND user_id=?",
+                (tid, self.user_id),
+            )
         elif title:
-            conn.execute("UPDATE todos SET status='done', updated_at=datetime('now') WHERE title=? AND user_id=?", (title, self.user_id))
+            count = conn.execute(
+                "SELECT COUNT(*) as c FROM todos WHERE title=? AND user_id=? AND status!='done'",
+                (title, self.user_id),
+            ).fetchone()
+            if count and count["c"] > 1:
+                conn.close()
+                return {
+                    "error": f"Multiple tasks named '{title}'. Use todo_id from list."
+                }
+            conn.execute(
+                "UPDATE todos SET status='done', updated_at=datetime('now') WHERE title=? AND user_id=?",
+                (title, self.user_id),
+            )
         changed = conn.total_changes
         conn.commit()
         conn.close()
@@ -70,7 +85,10 @@ class TodoAgent(BaseAgent):
         if not tid:
             return {"error": "todo_id is required"}
         conn = get_connection()
-        conn.execute("UPDATE todos SET status='in_progress', updated_at=datetime('now') WHERE id=? AND user_id=?", (tid, self.user_id))
+        conn.execute(
+            "UPDATE todos SET status='in_progress', updated_at=datetime('now') WHERE id=? AND user_id=?",
+            (tid, self.user_id),
+        )
         conn.commit()
         conn.close()
         return {"status": "started", "id": tid}

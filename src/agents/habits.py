@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from .base import BaseAgent
 from ..db.database import get_connection
@@ -66,8 +66,7 @@ class HabitsAgent(BaseAgent):
             conn.close()
             return {"status": "already_checked", "name": name, "streak": streak}
 
-        yesterday = (date.today().replace(day=1) if date.today().day == 1
-                      else date.today().replace(day=date.today().day - 1)).isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
         yesterday_log = conn.execute(
             "SELECT id FROM habit_logs WHERE habit_id=? AND date=?",
             (hid, yesterday),
@@ -112,7 +111,9 @@ class HabitsAgent(BaseAgent):
             "INSERT OR REPLACE INTO habit_logs (id, habit_id, date, status) VALUES (?,?,?,?)",
             (str(uuid.uuid4())[:8], hid, today_str, "skipped"),
         )
-        conn.execute("UPDATE habits SET streak=0, last_checkin=? WHERE id=?", (today_str, hid))
+        conn.execute(
+            "UPDATE habits SET streak=0, last_checkin=? WHERE id=?", (today_str, hid)
+        )
         conn.commit()
         conn.close()
         return {"status": "skipped", "name": name, "streak": 0}
@@ -131,20 +132,24 @@ class HabitsAgent(BaseAgent):
                 "SELECT status FROM habit_logs WHERE habit_id=? AND date=?",
                 (r["id"], today_str),
             ).fetchone()
-            result.append({
-                "name": r["name"],
-                "target": r["target"],
-                "streak": r["streak"],
-                "best_streak": r["best_streak"],
-                "today": check["status"] if check else "pending",
-            })
+            result.append(
+                {
+                    "name": r["name"],
+                    "target": r["target"],
+                    "streak": r["streak"],
+                    "best_streak": r["best_streak"],
+                    "today": check["status"] if check else "pending",
+                }
+            )
         conn.close()
         return {"status": "ok", "count": len(result), "habits": result}
 
     def _handle_remove(self, p: dict) -> dict:
         name = p.get("name", "")
         conn = get_connection()
-        conn.execute("DELETE FROM habits WHERE user_id=? AND name=?", (self.user_id, name))
+        conn.execute(
+            "DELETE FROM habits WHERE user_id=? AND name=?", (self.user_id, name)
+        )
         conn.commit()
         conn.close()
         return {"status": "removed", "name": name}
@@ -213,7 +218,14 @@ class HabitsAgent(BaseAgent):
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "checkin", "skip", "status", "remove", "history"],
+                            "enum": [
+                                "add",
+                                "checkin",
+                                "skip",
+                                "status",
+                                "remove",
+                                "history",
+                            ],
                             "description": "Action to perform on habits",
                         },
                         "name": {

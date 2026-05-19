@@ -7,6 +7,11 @@ DB_PATH = Path(settings.data_dir) / "personal_agent.db"
 
 
 def get_connection():
+    """Return a new SQLite connection with WAL mode and FK enforcement.
+
+    Always use this function instead of raw sqlite3.connect() — otherwise
+    row_factory, WAL journal, and foreign keys will not be configured.
+    """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row

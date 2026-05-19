@@ -27,6 +27,7 @@ class NotesAgent(BaseAgent):
         tags = p.get("tags", [])
 
         safe = re.sub(r"[^\w\-_ ]", "", title).strip().replace(" ", "_") or "untitled"
+        safe = safe[:100]
         filepath = self.notes_dir / f"{safe}.md"
 
         if filepath.exists():
@@ -39,7 +40,8 @@ class NotesAgent(BaseAgent):
         header += "\n"
 
         filepath.write_text(header + content, encoding="utf-8")
-        return {"status": "created", "title": title, "path": str(filepath)}
+        rel_path = str(filepath.relative_to(settings.data_dir))
+        return {"status": "created", "title": title, "path": rel_path}
 
     async def _handle_list(self, p: dict) -> dict:
         tag_filter = p.get("tag")
@@ -77,7 +79,7 @@ class NotesAgent(BaseAgent):
                 {
                     "title": f.stem.replace("_", " "),
                     "snippet": "\n".join(lines[lo:hi]),
-                    "path": str(f),
+                    "path": str(f.relative_to(settings.data_dir)),
                 }
             )
         return {"status": "ok", "count": len(results), "results": results}

@@ -7,6 +7,7 @@ from ..db.database import get_connection
 def get_all_user_ids() -> list[str]:
     from pathlib import Path
     from ..config import settings
+
     pd = Path(settings.data_dir) / "profiles"
     if not pd.exists():
         return []
@@ -112,15 +113,19 @@ class ShoppingAgent(BaseAgent):
     def _handle_remove_item(self, p: dict) -> dict:
         iid = p.get("item_id", "")
         name = p.get("item_name", "")
+        list_name = p.get("list_name", "")
 
         conn = get_connection()
         if iid:
             conn.execute("DELETE FROM shopping_items WHERE id=?", (iid,))
-        elif name:
+        elif name and list_name:
             conn.execute(
-                "DELETE FROM shopping_items WHERE name=? AND list_id IN (SELECT id FROM shopping_lists WHERE user_id=?)",
-                (name, self.user_id),
+                "DELETE FROM shopping_items WHERE name=? AND list_id IN "
+                "(SELECT id FROM shopping_lists WHERE user_id=? AND name=?)",
+                (name, self.user_id, list_name),
             )
+        elif name:
+            return {"error": "list_name required when removing by item_name"}
         conn.commit()
         conn.close()
         return {"status": "removed"}
@@ -176,7 +181,7 @@ class ShoppingAgent(BaseAgent):
                         },
                         "list_name": {
                             "type": "string",
-                            "description": "Name of the shopping list (default if omitted)",
+                            "description": "Name of the shopping list (default if omitted; required for remove_item with item_name)",
                         },
                         "item_name": {
                             "type": "string",

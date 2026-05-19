@@ -1,10 +1,12 @@
 from openai import OpenAI
+import httpx
 
 from ..config import settings
 
 client = OpenAI(
     api_key=settings.openrouter_api_key,
     base_url=settings.openrouter_base_url,
+    timeout=httpx.Timeout(60.0, connect=10.0),
 )
 
 
