@@ -21,8 +21,16 @@ _orchestrators: dict[int, Orchestrator] = {}
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("📝 Notas"), KeyboardButton("⏰ Lembretes"), KeyboardButton("🛒 Compras")],
-        [KeyboardButton("📋 Hoje"), KeyboardButton("🏃 Habitos"), KeyboardButton("📤 Exportar")],
+        [
+            KeyboardButton("📝 Notas"),
+            KeyboardButton("⏰ Lembretes"),
+            KeyboardButton("🛒 Compras"),
+        ],
+        [
+            KeyboardButton("📋 Hoje"),
+            KeyboardButton("🏃 Habitos"),
+            KeyboardButton("📤 Exportar"),
+        ],
         [KeyboardButton("🌐 Pesquisar"), KeyboardButton("📅 Calendario")],
     ],
     resize_keyboard=True,
@@ -174,7 +182,9 @@ async def profile(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if p.email:
         lines.append(f"Email: {_escape(p.email)}")
     if p.preferences:
-        prefs = ", ".join(f"{_escape(k)}: {_escape(v)}" for k, v in p.preferences.items())
+        prefs = ", ".join(
+            f"{_escape(k)}: {_escape(v)}" for k, v in p.preferences.items()
+        )
         lines.append(f"Preferencias: {prefs}")
     if p.frequent_contacts:
         lines.append(f"Contactos: {', '.join(_escape(c) for c in p.frequent_contacts)}")
@@ -205,7 +215,15 @@ async def update_bot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         out = result.stdout.strip() or result.stderr.strip() or "sem alteracoes"
         await update.message.reply_text(f"git pull: {out[:500]}")
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"],
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                "requirements.txt",
+                "--quiet",
+            ],
             capture_output=True,
         )
         await update.message.reply_text("A reiniciar... 🔄")
@@ -231,7 +249,9 @@ async def hoje_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     now = dt.datetime.now(dt.timezone.utc)
     today_str = now.strftime("%Y-%m-%d")
 
-    today_reminders = ReminderAgent.get_for_day_range(uid, f"{today_str}T00:00", f"{today_str}T23:59")
+    today_reminders = ReminderAgent.get_for_day_range(
+        uid, f"{today_str}T00:00", f"{today_str}T23:59"
+    )
     shop = ShoppingAgent.get_pending_summary_for(uid)
     todos_list = TodoAgent.get_pending_for(uid)
     habits_list = HabitsAgent.get_pending_for(uid)
@@ -253,15 +273,21 @@ async def hoje_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if todos_list:
         lines.append("\n\U0001f4dd *Tarefas:*")
         for t in todos_list:
-            icon = {"high": "\\\U0001f534", "medium": "\\\U0001f7e1", "low": "\\\U0001f7e2"}.get(t["priority"], "")
+            icon = {
+                "high": "\\\U0001f534",
+                "medium": "\\\U0001f7e1",
+                "low": "\\\U0001f7e2",
+            }.get(t["priority"], "")
             lines.append(f"  \u2022 {icon} {_escape(t['title'])}")
 
     if habits_list:
         lines.append("\n\U0001f3c3 *Habitos:*")
         for h in habits_list:
             done = "\\\u2705" if h["today_status"] == "done" else "\\\u274c"
-            target = f" \\({h['target']}\\)" if h.get("target") else ""
-            lines.append(f"  {done} {_escape(h['name'])}{target} \\- streak {h['streak']}")
+            target = f" \\({_escape(h['target'])}\\)" if h.get("target") else ""
+            lines.append(
+                f"  {done} {_escape(h['name'])}{target} \\- streak {h['streak']}"
+            )
 
     if cal_events:
         lines.append("\n📅 *Agenda:*")
@@ -296,7 +322,9 @@ async def export_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     now = dt.datetime.now(dt.timezone.utc).strftime("%d/%m/%Y %H:%M")
 
     lines = [f"# Personal Agent Export — {now}\n"]
-    lines.append(f"## Perfil\nNome: {p.name or '-'} | Fuso: {p.timezone} | Lingua: {p.language}\n")
+    lines.append(
+        f"## Perfil\nNome: {p.name or '-'} | Fuso: {p.timezone} | Lingua: {p.language}\n"
+    )
 
     notes = NotesAgent(uid)._handle_list({})
     lines.append("## Notas")
@@ -337,11 +365,14 @@ async def export_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if hab.get("habits"):
         for h in hab["habits"]:
             fire = "🔥" * min(h["streak"], 5)
-            lines.append(f"- {h['name']}: streak {h['streak']} {fire} | best {h['best_streak']}")
+            lines.append(
+                f"- {h['name']}: streak {h['streak']} {fire} | best {h['best_streak']}"
+            )
     else:
         lines.append("_vazio_")
 
     import io
+
     buf = io.BytesIO("\n".join(lines).encode("utf-8"))
     buf.name = f"export_{now.replace('/', '-').replace(':', '-').replace(' ', '_')}.md"
     await update.message.reply_document(buf)
@@ -371,6 +402,7 @@ async def cal_events_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     import datetime as dt
+
     now = dt.datetime.now(dt.timezone.utc)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + dt.timedelta(days=7)
@@ -418,10 +450,12 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE):
     import traceback
     import telegram.error
+
     err = ctx.error
     if isinstance(err, telegram.error.Conflict):
         print("FATAL: Another bot instance is polling. Shutting down.")
         import os
+
         os._exit(42)
     print(f"Error: {err}")
     traceback.print_exception(type(err), err, err.__traceback__)
@@ -435,9 +469,13 @@ def build_app() -> Application:
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            ONBOARD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_name)],
+            ONBOARD_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_name)
+            ],
             ONBOARD_TZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_tz)],
-            ONBOARD_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_lang)],
+            ONBOARD_LANG: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_lang)
+            ],
         },
         fallbacks=[CommandHandler("cancel", onboard_cancel)],
     )
@@ -472,8 +510,8 @@ def setup_jobs(app: Application):
             try:
                 await ctx.bot.send_message(
                     chat_id=int(r["user_id"]),
-                    text=f"\u23f0 *Lembrete*\n{r['message']}",
-                    parse_mode="Markdown",
+                    text=f"\u23f0 *Lembrete*\n{_escape(r['message'])}",
+                    parse_mode="MarkdownV2",
                 )
             except Exception:
                 pass
@@ -494,18 +532,28 @@ def setup_jobs(app: Application):
             try:
                 week_start = monday.strftime("%Y-%m-%dT00:00")
                 week_end = (sunday + dt.timedelta(days=1)).strftime("%Y-%m-%dT00:00")
-                week_reminders = ReminderAgent.get_for_day_range(uid, week_start, week_end)
+                week_reminders = ReminderAgent.get_for_day_range(
+                    uid, week_start, week_end
+                )
                 shop = ShoppingAgent.get_pending_summary_for(uid)
                 todos_list = TodoAgent.get_pending_for(uid)
                 habits_list = HabitsAgent.get_pending_for(uid)
 
-                cal_start = dt.datetime.combine(monday, dt.time.min, tzinfo=dt.timezone.utc)
-                cal_end = dt.datetime.combine(sunday + dt.timedelta(days=1), dt.time.min, tzinfo=dt.timezone.utc)
+                cal_start = dt.datetime.combine(
+                    monday, dt.time.min, tzinfo=dt.timezone.utc
+                )
+                cal_end = dt.datetime.combine(
+                    sunday + dt.timedelta(days=1), dt.time.min, tzinfo=dt.timezone.utc
+                )
                 cal_events = CalendarAgent.get_events_for_range(uid, cal_start, cal_end)
 
                 by_day: dict[str, list[dict]] = {}
                 for r in week_reminders:
-                    d = r["trigger_at"][:10] if "T" in r["trigger_at"] else r["trigger_at"]
+                    d = (
+                        r["trigger_at"][:10]
+                        if "T" in r["trigger_at"]
+                        else r["trigger_at"]
+                    )
                     by_day.setdefault(d, []).append(r)
 
                 cal_by_day: dict[str, list[dict]] = {}
@@ -523,11 +571,17 @@ def setup_jobs(app: Application):
                     entries = by_day.get(d_key, [])
                     cal_entries = cal_by_day.get(d_key, [])
                     marker = " \\(hoje\\)" if d == today else ""
-                    lines.append(f"\U0001f539 *{days_pt[i]} {d.strftime('%d/%m')}*{marker}")
+                    lines.append(
+                        f"\U0001f539 *{days_pt[i]} {d.strftime('%d/%m')}*{marker}"
+                    )
 
                     if entries:
                         for e in entries:
-                            ts = e["trigger_at"][11:16] if "T" in e["trigger_at"] else e["trigger_at"]
+                            ts = (
+                                e["trigger_at"][11:16]
+                                if "T" in e["trigger_at"]
+                                else e["trigger_at"]
+                            )
                             lines.append(f"    \u2022 {ts} \\- {_escape(e['message'])}")
 
                     if cal_entries:
@@ -535,7 +589,9 @@ def setup_jobs(app: Application):
                             s = ce["start"]
                             if "T" in s:
                                 ts = s[11:16]
-                                lines.append(f"    📅 {ts} \\- {_escape(ce['summary'])}")
+                                lines.append(
+                                    f"    📅 {ts} \\- {_escape(ce['summary'])}"
+                                )
                             else:
                                 lines.append(f"    📅 {_escape(ce['summary'])}")
 
@@ -545,23 +601,41 @@ def setup_jobs(app: Application):
                 if todos_list:
                     lines.append("\n\U0001f4dd *Tarefas pendentes:*")
                     for t in todos_list:
-                        icon = {"high": "\\\U0001f534", "medium": "\\\U0001f7e1", "low": "\\\U0001f7e2"}.get(t["priority"], "")
-                        status = {"in_progress": " \\(em curso\\)"}.get(t.get("status", ""), "")
+                        icon = {
+                            "high": "\\\U0001f534",
+                            "medium": "\\\U0001f7e1",
+                            "low": "\\\U0001f7e2",
+                        }.get(t["priority"], "")
+                        status = {"in_progress": " \\(em curso\\)"}.get(
+                            t.get("status", ""), ""
+                        )
                         lines.append(f"  \u2022 {icon} {_escape(t['title'])}{status}")
 
                 if habits_list:
                     lines.append("\n\U0001f3c3 *Habitos:*")
                     for h in habits_list:
-                        done = "\\\u2705" if h["today_status"] == "done" else "\\u274c"
-                        target = f" \\({h['target']}\\)" if h.get("target") else ""
-                        fire = "\\\U0001f525" * min(h.get("streak", 0), 3) if h.get("streak", 0) > 1 else ""
+                        done = "\\\u2705" if h["today_status"] == "done" else "\\\u274c"
+                        target = (
+                            f" \\({_escape(h['target'])}\\)" if h.get("target") else ""
+                        )
+                        fire = (
+                            "\\\U0001f525" * min(h.get("streak", 0), 3)
+                            if h.get("streak", 0) > 1
+                            else ""
+                        )
                         lines.append(f"  {done} {_escape(h['name'])}{target} {fire}")
 
                 if shop:
                     lines.append("\n\U0001f6d2 *Compras pendentes:*")
                     for s in shop:
-                        qty = f" \\({s['quantity']}\\)" if s.get("quantity") else ""
-                        lines.append(f"  \u2022 {_escape(s['item'])}{qty} _\\({_escape(s['list_name'])}\\)_")
+                        qty = (
+                            f" \\({_escape(s['quantity'])}\\)"
+                            if s.get("quantity")
+                            else ""
+                        )
+                        lines.append(
+                            f"  \u2022 {_escape(s['item'])}{qty} _\\({_escape(s['list_name'])}\\)_"
+                        )
 
                 await ctx.bot.send_message(
                     chat_id=int(uid),
@@ -574,12 +648,12 @@ def setup_jobs(app: Application):
     async def proactive_habits(ctx: ContextTypes.DEFAULT_TYPE):
         for uid, pending_habits in HabitsAgent.get_users_with_pending():
             try:
-                names = ", ".join(h["name"] for h in pending_habits)
+                names = ", ".join(_escape(h["name"]) for h in pending_habits)
                 await ctx.bot.send_message(
                     chat_id=int(uid),
                     text=f"\U0001f3c3 *Check\\-in de habitos\\!*\n"
-                         f"Ainda nao registaste hoje: {names}\\.\n"
-                         f"Ja fizeste? Ainda vais fazer?",
+                    f"Ainda nao registaste hoje: {names}\\.\n"
+                    f"Ja fizeste? Ainda vais fazer?",
                     parse_mode="MarkdownV2",
                 )
             except Exception:
@@ -597,6 +671,7 @@ def setup_jobs(app: Application):
 
 
 def _escape(text: str) -> str:
+    text = text.replace("\\", "\\\\")
     for ch in "_*[]()~`>#+-=|{}.!":
         text = text.replace(ch, f"\\{ch}")
     return text
