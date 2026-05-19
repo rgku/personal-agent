@@ -40,8 +40,14 @@ def _request_device_code() -> dict:
         data=data,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(
+            f"Google device code error {e.code}: {body}"
+        )
 
 
 def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int = 300):
@@ -80,6 +86,11 @@ def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int 
                 elif err in ("access_denied", "expired_token"):
                     _device_flows.pop(device_code, None)
                     return
+            else:
+                body = e.read().decode("utf-8", errors="ignore")
+                print(f"[Calendar] Token poll error {e.code}: {body}")
+                _device_flows.pop(device_code, None)
+                return
     _device_flows.pop(device_code, None)
 
 
