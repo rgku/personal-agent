@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from zoneinfo import available_timezones
@@ -227,14 +228,14 @@ async def update_bot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             capture_output=True,
         )
         await update.message.reply_text("A reiniciar... 🔄")
-        sys.exit(42)
+        os._exit(42)
     except Exception as e:
         await update.message.reply_text(f"Erro ao atualizar: {e}")
 
 
 async def restart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("A reiniciar... 🔄")
-    sys.exit(42)
+    os._exit(42)
 
 
 async def hoje_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -454,9 +455,7 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE):
     err = ctx.error
     if isinstance(err, telegram.error.Conflict):
         print("FATAL: Another bot instance is polling. Shutting down.")
-        import os
-
-        os._exit(42)
+        os._exit(0)
     print(f"Error: {err}")
     traceback.print_exception(type(err), err, err.__traceback__)
 
