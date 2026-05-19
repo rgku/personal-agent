@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 import time
 import urllib.request
@@ -15,6 +16,8 @@ from googleapiclient.errors import HttpError
 from .base import BaseAgent
 from ..config import settings
 from ..memory.profile import ProfileManager
+
+log = logging.getLogger(__name__)
 
 UTC = tz.utc
 
@@ -82,25 +85,28 @@ def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int 
             tp.parent.mkdir(parents=True, exist_ok=True)
             with open(tp, "w") as f:
                 json.dump(json.loads(creds.to_json()), f)
-            print(f"[Calendar] Token saved for user {user_id}")
-            _device_flows.pop(device_code, None)
-            return
+            log.info("Token saved for user %s", user_id)
+                _device_flows.pop(device_code, None)
+                return
         except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="ignore")
             if e.code == 400:
-                body = json.loads(e.read())
-                err = body.get("error", "")
+                err = json.loads(body).get("error", "")
                 if err == "slow_down":
+                    log.info("Google slow_down, increasing interval")
                     interval += 5
                 elif err in ("access_denied", "expired_token"):
+                    log.info("Poll ended: %s", err)
                     _device_flows.pop(device_code, None)
                     return
+                else:
+                    log.warning("Poll 400: %s", body)
             else:
-                body = e.read().decode("utf-8", errors="ignore")
-                print(f"[Calendar] Token poll error {e.code}: {body}")
+                log.error("Token poll error %s: %s", e.code, body)
                 _device_flows.pop(device_code, None)
                 return
         except Exception as e:
-            print(f"[Calendar] Token poll unexpected error: {e}")
+            log.exception("Token poll unexpected error")
             _device_flows.pop(device_code, None)
             return
     _device_flows.pop(device_code, None)
@@ -172,6 +178,7 @@ class CalendarAgent(BaseAgent):
         interval = device_info.get("interval", 5)
 
         _device_flows[device_code] = {"user_id": user_id}
+        log.info("Starting auth for user %s (code=%s)", user_id, user_code)
 
         t = threading.Thread(
             target=_poll_for_token,
