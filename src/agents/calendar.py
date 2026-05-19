@@ -20,7 +20,7 @@ UTC = tz.utc
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar",
 ]
 
 TOKEN_DIR = Path(settings.data_dir) / "cal_tokens"
