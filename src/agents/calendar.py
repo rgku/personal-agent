@@ -4,6 +4,7 @@ import threading
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timedelta, timezone as tz
 from pathlib import Path
 
@@ -32,7 +33,7 @@ _device_flows: dict[str, dict] = {}
 
 
 def _request_device_code() -> dict:
-    data = json.dumps(
+    data = urllib.parse.urlencode(
         {
             "client_id": settings.google_client_id,
             "scope": " ".join(SCOPES),
@@ -41,7 +42,6 @@ def _request_device_code() -> dict:
     req = urllib.request.Request(
         "https://oauth2.googleapis.com/device/code",
         data=data,
-        headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -54,7 +54,7 @@ def _request_device_code() -> dict:
 
 
 def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int = 300):
-    data = json.dumps(
+    data = urllib.parse.urlencode(
         {
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
@@ -69,7 +69,6 @@ def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int 
             req = urllib.request.Request(
                 "https://oauth2.googleapis.com/token",
                 data=data,
-                headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 token_data = json.loads(resp.read())
