@@ -70,13 +70,21 @@ def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int 
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 token_data = json.loads(resp.read())
-                creds = Credentials.from_authorized_user_info(token_data, SCOPES)
-                tp = TOKEN_DIR / f"{user_id}.json"
-                tp.parent.mkdir(parents=True, exist_ok=True)
-                with open(tp, "w") as f:
-                    json.dump(json.loads(creds.to_json()), f)
-                _device_flows.pop(device_code, None)
-                return
+            creds = Credentials(
+                token=token_data["access_token"],
+                refresh_token=token_data.get("refresh_token"),
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=settings.google_client_id,
+                client_secret=settings.google_client_secret,
+                scopes=SCOPES,
+            )
+            tp = TOKEN_DIR / f"{user_id}.json"
+            tp.parent.mkdir(parents=True, exist_ok=True)
+            with open(tp, "w") as f:
+                json.dump(json.loads(creds.to_json()), f)
+            print(f"[Calendar] Token saved for user {user_id}")
+            _device_flows.pop(device_code, None)
+            return
         except urllib.error.HTTPError as e:
             if e.code == 400:
                 body = json.loads(e.read())
@@ -91,6 +99,10 @@ def _poll_for_token(device_code: str, user_id: str, interval: int, timeout: int 
                 print(f"[Calendar] Token poll error {e.code}: {body}")
                 _device_flows.pop(device_code, None)
                 return
+        except Exception as e:
+            print(f"[Calendar] Token poll unexpected error: {e}")
+            _device_flows.pop(device_code, None)
+            return
     _device_flows.pop(device_code, None)
 
 
